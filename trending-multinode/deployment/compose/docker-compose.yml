@@ -1,0 +1,172 @@
+version: '3.8'
+volumes:
+  db_data:
+    driver: local
+  ingress_storage:
+    driver: local
+  cache_data:
+    driver: local
+networks:
+  ingress:
+    name: trending_ingress
+    driver: bridge
+  backend:
+    name: trending_backend
+    driver: bridge
+x-service-main: &x-service-main
+  image: 'registry.gitlab.com/moonbite/trending/main'
+  build:
+    context: ../../
+    dockerfile: build/package/docker/main/Dockerfile
+  environment:
+    DEBUG: ${DEBUG}
+    LOG_LEVEL: ${LOG_LEVEL}
+    DSN_DB: 'postgresql://trending:trending@db:5432/trending?sslmode=disable'
+    DSN_CACHE: 'redis://:NBqthmT8RfuQt5Uh@cache:6379/0'
+    INSTANCES: ${INSTANCES}
+    CENTRIFUGO_ADDR: 'http://centrifugo:8000/api'
+    CENTRIFUGO_API_KEY: '${CENTRIFUGO_API_KEY}'
+  deploy:
+    resources:
+      limits:
+        cpus: "2"
+        memory: "4G"
+services:
+  ingress:
+    image: traefik:v2.4.2
+    restart: always
+    expose:
+      - 80
+      - 8080
+    networks:
+      - ingress
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "ingress_storage:/storage/"
+    command:
+      - "--log.level=DEBUG"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.network=trending_ingress"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entryPoints.web.address=:80"
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: "2G"
+  api:
+    <<: *x-service-main
+    restart: always
+    expose: [8000]
+    networks: ['backend', 'ingress']
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api.rule=Host(`${DOMAIN}`)"
+    command: "api"
+  collections:
+    <<: *x-service-main
+    restart: always
+    networks: ['backend']
+    command: "collections"
+  stats:
+    <<: *x-service-main
+    restart: always
+    networks: ['backend']
+    command: "stats"
+  actualize:
+    <<: *x-service-main
+    restart: always
+    networks: [ 'backend' ]
+    command: "actualize"
+  merarity:
+    <<: *x-service-main
+    restart: always
+    networks: [ 'backend' ]
+    command: "merarity"
+  cookies:
+    <<: *x-service-main
+    restart: always
+    networks: ['backend']
+    command: 'cookies'
+    depends_on: ['chrome']
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+  db-migrate:
+    <<: *x-service-main
+    networks: ['backend']
+    entrypoint: '/bin/sh -c "dockerize -wait tcp://db:5432 /go/bin/migrate -path /var/app/migrations -database $${DSN_DB} up"'
+  db:
+    image: 'bitnami/postgresql:14.2.0-debian-10-r42'
+    expose: [5432]
+    shm_size: 1g
+    restart: always
+    networks: ['backend']
+    volumes:
+      - "db_data:/bitnami/postgresql"
+    environment:
+      BITNAMI_DEBUG: 'yes'
+      ALLOW_EMPTY_PASSWORD: 'no'
+      POSTGRESQL_USERNAME: 'trending'
+      POSTGRESQL_PASSWORD: 'trending'
+      POSTGRESQL_DATABASE: 'trending'
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: "8G"
+  cache:
+    image: 'bitnami/redis:7.0.2-debian-11-r9'
+    expose: [6379]
+    restart: always
+    networks: ['backend']
+    volumes:
+      - "cache_data:/bitnami/redis/data"
+    environment:
+      BITNAMI_DEBUG: 'yes'
+      REDIS_PASSWORD: 'NBqthmT8RfuQt5Uh'
+#    sysctls:
+#      - 'net.core.somaxconn=32768'                      # Максимальное число открытых сокетов, ждущих соединения
+#      - 'net.ipv4.ip_local_port_range=1024 65000'       # Диапазон доступных портов
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: "8G"
+  centrifugo:
+    container_name: centrifugo
+    image: centrifugo/centrifugo:v4
+    command: centrifugo
+    restart: always
+    expose: [8000]
+    networks: ['backend', 'ingress']
+    environment:
+      CENTRIFUGO_CLIENT_INSECURE: 'true'
+      CENTRIFUGO_API_KEY: ${CENTRIFUGO_API_KEY}
+      CENTRIFUGO_ALLOWED_ORIGINS: '*'
+      CENTRIFUGO_ALLOW_SUBSCRIBE_FOR_CLIENT: 'true'
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.middlewares.sp-events.stripprefix.prefixes=/events"
+      - "traefik.http.routers.centrifugo.rule=Host(`${DOMAIN}`) && PathPrefix(`/events/`)"
+      - "traefik.http.routers.centrifugo.middlewares=sp-events@docker"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+  chrome:
+    image: registry.gitlab.com/moonbite/trending/chrome
+    container_name: chrome
+    build:
+      context: ../../
+      dockerfile: build/package/docker/chrome/Dockerfile
+    networks: ['backend']
+    privileged: true
+    shm_size: 2g
+    restart: always
+    user: apps
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: "3G"

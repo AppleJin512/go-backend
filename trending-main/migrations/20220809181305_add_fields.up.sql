@@ -1,0 +1,6 @@
+ALTER TABLE activities
+    ADD COLUMN name VARCHAR(255) DEFAULT '';
+ALTER TABLE activities
+    ADD COLUMN mint_address VARCHAR(64) DEFAULT '';
+ALTER TABLE activities
+    ADD COLUMN uri VARCHAR(500) DEFAULT '';

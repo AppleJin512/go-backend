@@ -1,0 +1,43 @@
+.compose-deploy-context:
+  stage: deploy
+  image: docker:20.10.18
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  services:
+    - docker:20.10.18-dind
+  before_script:
+    - eval $(ssh-agent -s)
+    - echo "$DEPLOY_SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add - > /dev/null
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n\tTCPKeepAlive yes\n\n" > ~/.ssh/config
+
+    - docker context create remote --docker "host=ssh://$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST"
+    - docker --context remote info
+    - docker --context remote login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - cd deployment/compose
+    - cp .env.dist .env
+    - docker --context remote compose pull || true
+    - docker --context remote compose up -d --no-build --quiet-pull
+
+.compose-deploy:
+  stage: deploy
+  image: alpine:3.16.2
+  before_script:
+    - 'command -v ssh-agent >/dev/null || ( apk add --no-cache openssh-client )'
+    - eval $(ssh-agent -s)
+    - echo "$DEPLOY_SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add - > /dev/null
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n\tTCPKeepAlive yes\n\n" > ~/.ssh/config
+
+    - export REGISTRY="${DEPLOY_REGISTRY:-$CI_REGISTRY}"
+    - export REGISTRY_USER="${DEPLOY_REGISTRY_USER:-$CI_REGISTRY_USER}"
+    - export REGISTRY_PASSWORD="${DEPLOY_REGISTRY_PASSWORD:-$CI_REGISTRY_PASSWORD}"
+
+    - echo "$DEPLOY_DOT_ENV" > deployment/compose/.env
+    - scp -r deployment/compose $DEPLOY_SSH_USER@$DEPLOY_SSH_HOST:/home/ubuntu/
+    - ssh $DEPLOY_SSH_USER@$DEPLOY_SSH_HOST "docker login -u $REGISTRY_USER -p $REGISTRY_PASSWORD $REGISTRY"
+  script:
+    - ssh $DEPLOY_SSH_USER@$DEPLOY_SSH_HOST "cd compose && (docker compose pull || true) && docker compose up -d --no-build --quiet-pull"

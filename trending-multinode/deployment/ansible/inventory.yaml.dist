@@ -1,0 +1,6 @@
+all:
+  hosts:
+    server:
+      ansible_host: <IP ADDRESS>
+  vars:
+    ansible_user: ubuntu

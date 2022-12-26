@@ -1,0 +1,31 @@
+include:
+  - local: '/.gitlab/ci/templates/docker-build.yml'
+  - local: '/.gitlab/ci/templates/compose-deploy.yml'
+
+stages: [ build, deploy ]
+
+main:build:
+  extends: [ .docker-build ]
+  only:
+    changes:
+      - build/package/docker/main/**/*
+      - cmd/**/*
+      - internal/**/*
+      - migrations/**/*
+      - go.*
+
+chrome:build:
+  extends: [ .docker-build ]
+  only:
+    changes:
+      - build/package/docker/chrome/**/*
+
+deploy:
+  extends: [ .compose-deploy ]
+  variables:
+    DEPLOY_SSH_USER: 'ubuntu'
+  environment:
+    name: production
+    url: https://trending.moonbite.io/
+  only:
+    - main

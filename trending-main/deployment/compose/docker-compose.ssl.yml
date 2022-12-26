@@ -1,0 +1,34 @@
+version: '3.9'
+services:
+  ingress:
+    ports:
+      - "80:80"
+      - "443:443"
+    labels:
+      # Redirect all HTTP to HTTPS permanently
+      - "traefik.enable=true"
+      - "traefik.http.routers.http_catchall.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.http_catchall.entrypoints=web"
+      - "traefik.http.routers.http_catchall.middlewares=https_redirect"
+      - "traefik.http.middlewares.https_redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.https_redirect.redirectscheme.permanent=true"
+    command:
+      - "--log.level=DEBUG"
+      - "--providers.docker"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=trending_ingress"
+      - "--entryPoints.web.address=:80"
+      - "--entryPoints.websecure.address=:443"
+      - "--certificatesResolvers.le.acme.email=${DOMAIN_EMAIL}"
+      - "--certificatesResolvers.le.acme.storage=/storage/acme.json"
+      - "--certificatesResolvers.le.acme.tlsChallenge=true"
+      - "--certificatesResolvers.le.acme.httpChallenge=true"
+      - "--certificatesResolvers.le.acme.httpChallenge.entryPoint=web"
+  api:
+    labels:
+      - "traefik.http.routers.api.tls=true"
+      - "traefik.http.routers.api.tls.certresolver=le"
+  centrifugo:
+    labels:
+      - "traefik.http.routers.centrifugo.tls=true"
+      - "traefik.http.routers.centrifugo.tls.certresolver=le"
